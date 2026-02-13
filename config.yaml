@@ -1,0 +1,42 @@
+# Library Clerk Configuration
+# ============================
+
+library:
+  # Directories to scan for publications
+  paths:
+    - ~/papers
+    - ~/books
+    - ~/library
+  # File extensions to process
+  extensions:
+    - .pdf
+    - .epub
+
+ollama:
+  base_url: http://localhost:11434
+  # Stage 1: Fast classification, keyword extraction, metadata
+  classifier_model: ministral-3:3b
+  # Stage 2: Structured ontology generation, relationship mapping
+  ontology_model: deepseek-coder:6.7b
+  # Max tokens for text chunks sent to LLM
+  max_chunk_tokens: 4000
+  # Request timeout in seconds
+  timeout: 120
+
+graph:
+  # Backend: "networkx" (lightweight, no server needed) or "neo4j"
+  backend: networkx
+  neo4j:
+    uri: bolt://localhost:7687
+    user: neo4j
+    password: password
+    database: libraryClerk
+
+persistence:
+  # SQLite database file for caching all processed data
+  database: library_clerk.db
+
+server:
+  host: 0.0.0.0
+  port: 5000
+  debug: false

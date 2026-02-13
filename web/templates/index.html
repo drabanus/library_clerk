@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Library Clerk - Knowledge Graph</title>
+
+    <!-- vis.js for 2D network graph -->
+    <link href="https://unpkg.com/vis-network@9.1.6/dist/dist/vis-network.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
+
+    <!-- 3d-force-graph for 3D point cloud -->
+    <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+
+    <!-- Three.js + CSS2DRenderer for 3D labels -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/examples/js/renderers/CSS2DRenderer.js"></script>
+
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h1>Library Clerk</h1>
+                <p class="subtitle">Knowledge Graph Explorer</p>
+            </div>
+
+            <!-- Search -->
+            <div class="sidebar-section">
+                <label for="search-input">Search</label>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="Search publications, topics, concepts...">
+                    <button id="search-btn" onclick="doSearch()">Go</button>
+                </div>
+                <div id="search-results" class="result-list"></div>
+            </div>
+
+            <!-- View Mode -->
+            <div class="sidebar-section">
+                <label>View Mode</label>
+                <div class="btn-group">
+                    <button class="btn active" data-view="2d" onclick="switchView('2d')">2D Graph</button>
+                    <button class="btn" data-view="3d" onclick="switchView('3d')">3D Cloud</button>
+                    <button class="btn" data-view="timeline" onclick="switchView('timeline')">Timeline</button>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="sidebar-section">
+                <label>Node Types</label>
+                <div id="type-filters" class="filter-list"></div>
+            </div>
+
+            <!-- Edge Filters -->
+            <div class="sidebar-section">
+                <label>Relationships</label>
+                <div id="edge-filters" class="filter-list"></div>
+            </div>
+
+            <!-- Stats -->
+            <div class="sidebar-section">
+                <label>Statistics</label>
+                <div id="stats-panel" class="stats-grid"></div>
+            </div>
+
+            <!-- Focused Views -->
+            <div class="sidebar-section">
+                <label>Focused Views</label>
+                <div class="btn-group vertical">
+                    <button class="btn btn-sm" onclick="loadKeywordNetwork()">Keyword Network</button>
+                    <button class="btn btn-sm" onclick="loadAuthorNetwork()">Author Network</button>
+                    <button class="btn btn-sm" onclick="loadConceptMap()">Concept Map</button>
+                    <button class="btn btn-sm" onclick="loadClusters()">Domain Clusters</button>
+                    <button class="btn btn-sm" onclick="loadFullGraph()">Full Graph</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main id="main">
+            <!-- 2D Graph container -->
+            <div id="graph-2d" class="graph-container active"></div>
+
+            <!-- 3D Graph container -->
+            <div id="graph-3d" class="graph-container"></div>
+
+            <!-- Timeline container -->
+            <div id="timeline-container" class="graph-container">
+                <div id="timeline-content"></div>
+            </div>
+
+            <!-- Detail Panel (slides in from right) -->
+            <div id="detail-panel" class="detail-panel hidden">
+                <button class="close-btn" onclick="closeDetail()">&times;</button>
+                <div id="detail-content"></div>
+            </div>
+
+            <!-- Tooltip -->
+            <div id="tooltip" class="tooltip hidden"></div>
+        </main>
+    </div>
+
+    <script src="/static/js/graph.js"></script>
+</body>
+</html>
