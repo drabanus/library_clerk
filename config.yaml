@@ -17,7 +17,9 @@ ollama:
   # Stage 1: Fast classification, keyword extraction, metadata
   classifier_model: ministral-3:3b
   # Stage 2: Structured ontology generation, relationship mapping
-  ontology_model: deepseek-coder:6.7b
+  # qwen2.5:7b recommended — strong at both structured JSON and semantic reasoning
+  # alternatives: mistral:7b, deepseek-r1:8b, phi4-mini, gemma2:9b
+  ontology_model: qwen2.5:7b
   # Max tokens for text chunks sent to LLM
   max_chunk_tokens: 4000
   # Request timeout in seconds
