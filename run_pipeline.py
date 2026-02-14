@@ -350,7 +350,7 @@ def main():
             new_count += 1
 
         except Exception as e:
-            logger.error(f"Error processing {file_path}: {e}")
+            logger.error(f"Error processing {file_path}: {e}", exc_info=True)
             error_count += 1
 
     elapsed = time.time() - start_time

@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 class OllamaClient:
     """Wrapper around the Ollama Python client with retry and JSON parsing."""
 
+    # CPU inference is much slower; scale the read timeout so requests
+    # don't time out before the model finishes generating.
+    _CPU_TIMEOUT_MULTIPLIER = 5
+
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
@@ -29,25 +33,31 @@ class OllamaClient:
         max_retries: int = 3,
     ):
         self.base_url = base_url
-        self.timeout = timeout
         self.max_retries = max_retries
-        # The httpx timeout covers the entire request including model loading
-        # into VRAM on first call, which can take several minutes.
-        # Use a generous read timeout while keeping connect timeout short.
-        import httpx
-        http_timeout = httpx.Timeout(
-            connect=10.0,
-            read=float(timeout),
-            write=10.0,
-            pool=10.0,
-        )
-        self._client = ollama.Client(host=base_url, timeout=http_timeout)
         self._call_count = 0
         self._total_tokens = 0
 
         # Probe GPU and derive Ollama runtime options
         self.gpu_info = probe_gpu()
         self._hw_options = get_ollama_options(self.gpu_info)
+
+        # Widen the read timeout for CPU-only inference so that large
+        # models (e.g. deepseek-coder:6.7b) have time to finish.
+        if not self.gpu_info.has_gpu:
+            timeout = timeout * self._CPU_TIMEOUT_MULTIPLIER
+            logger.info(
+                f"CPU-only mode: read timeout raised to {timeout}s"
+            )
+        self.timeout = timeout
+
+        import httpx
+        http_timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(self.timeout),
+            write=10.0,
+            pool=10.0,
+        )
+        self._client = ollama.Client(host=base_url, timeout=http_timeout)
 
     def generate(
         self,
