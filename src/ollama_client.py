@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 import ollama
 
+from .gpu_probe import probe_gpu, get_ollama_options, GpuInfo
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +45,10 @@ class OllamaClient:
         self._call_count = 0
         self._total_tokens = 0
 
+        # Probe GPU and derive Ollama runtime options
+        self.gpu_info = probe_gpu()
+        self._hw_options = get_ollama_options(self.gpu_info)
+
     def generate(
         self,
         model: str,
@@ -69,7 +75,7 @@ class OllamaClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        options = {"temperature": temperature}
+        options = {"temperature": temperature, **self._hw_options}
 
         last_error = None
         for attempt in range(self.max_retries):
@@ -183,4 +189,5 @@ class OllamaClient:
         return {
             "total_calls": self._call_count,
             "total_tokens": self._total_tokens,
+            "compute": self.gpu_info.summary,
         }

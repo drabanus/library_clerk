@@ -277,6 +277,11 @@ def main():
         timeout=ollama_cfg.get("timeout", 120),
     )
 
+    # Report compute hardware
+    logger.info(f"Compute: {client.gpu_info.summary}")
+    if not client.gpu_info.has_gpu:
+        logger.warning("No GPU found — using CPU inference (this will be slower)")
+
     # Check model availability
     classifier_model = ollama_cfg.get("classifier_model", "ministral-3:3b")
     ontology_model = ollama_cfg.get("ontology_model", "deepseek-coder:6.7b")
