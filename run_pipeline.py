@@ -10,6 +10,8 @@ Usage:
     python run_pipeline.py                      # Use default config.yaml
     python run_pipeline.py --config my.yaml     # Custom config
     python run_pipeline.py --paths ~/papers     # Override library paths
+    python run_pipeline.py --limit 10           # Process only the first 10 files
+    python run_pipeline.py --solo-file 'My Paper.pdf'  # Process a single file
     python run_pipeline.py --reprocess          # Force reprocess all files
     python run_pipeline.py --dry-run            # Scan only, don't classify
 
@@ -189,6 +191,14 @@ def main():
         "--paths", nargs="+", help="Override library paths from config"
     )
     parser.add_argument(
+        "--limit", type=int, default=0,
+        help="Limit processing to the first N files",
+    )
+    parser.add_argument(
+        "--solo-file",
+        help="Process a single file by name (filename or full path)",
+    )
+    parser.add_argument(
         "--reprocess", action="store_true",
         help="Force reprocess all files, ignoring cache",
     )
@@ -210,17 +220,51 @@ def main():
     lib_paths = args.paths or config.get("library", {}).get("paths", [])
     extensions = config.get("library", {}).get("extensions", [".pdf", ".epub"])
 
-    logger.info(f"Scanning library paths: {lib_paths}")
-    files = scan_library(lib_paths, extensions)
-    logger.info(f"Found {len(files)} publication files")
+    # --solo-file: process a single file by name or path
+    if args.solo_file:
+        solo = Path(args.solo_file)
+        if solo.is_file():
+            # Argument is a direct path
+            files = [str(solo.resolve())]
+        else:
+            # Search for the filename inside the library paths
+            logger.info(f"Searching library for '{args.solo_file}'...")
+            all_files = scan_library(lib_paths, extensions)
+            target = args.solo_file
+            files = [
+                f for f in all_files
+                if Path(f).name == target or target in f
+            ]
+            if not files:
+                logger.error(
+                    f"File '{args.solo_file}' not found in library paths: {lib_paths}"
+                )
+                sys.exit(1)
+            if len(files) > 1:
+                logger.warning(
+                    f"Multiple matches for '{args.solo_file}', using first:"
+                )
+                for f in files:
+                    logger.warning(f"  {f}")
+                files = files[:1]
+        logger.info(f"Solo file: {files[0]}")
+    else:
+        logger.info(f"Scanning library paths: {lib_paths}")
+        files = scan_library(lib_paths, extensions)
+        logger.info(f"Found {len(files)} publication files")
 
     if not files:
         logger.warning("No files found. Check your library paths in config.yaml")
         sys.exit(0)
 
+    # --limit: cap the number of files to process
+    if args.limit > 0 and not args.solo_file:
+        logger.info(f"Limiting to first {args.limit} of {len(files)} files")
+        files = files[:args.limit]
+
     if args.dry_run:
         print(f"\n{'='*60}")
-        print(f"DRY RUN - {len(files)} files found:")
+        print(f"DRY RUN - {len(files)} file(s) to process:")
         print(f"{'='*60}")
         for f in files:
             print(f"  {f}")
