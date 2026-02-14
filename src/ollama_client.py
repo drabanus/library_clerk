@@ -145,13 +145,16 @@ class OllamaClient:
     def check_models(self, models: list[str]) -> dict[str, bool]:
         """Check which models are available locally."""
         try:
-            available = self._client.list()
+            response = self._client.list()
             available_names = set()
-            for m in available.get("models", []):
-                available_names.add(m["name"])
+            for m in response.models:
+                name = m.model or ""
+                available_names.add(name)
                 # Also add without tag for partial matching
-                base_name = m["name"].split(":")[0]
+                base_name = name.split(":")[0]
                 available_names.add(base_name)
+
+            logger.debug(f"Available Ollama models: {sorted(available_names)}")
         except Exception as e:
             logger.error(f"Failed to list Ollama models: {e}")
             return {m: False for m in models}
