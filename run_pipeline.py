@@ -267,6 +267,7 @@ def main():
     analyses: list[PublicationAnalysis] = []
     new_count = 0
     cached_count = 0
+    ocr_count = 0
     error_count = 0
 
     start_time = time.time()
@@ -274,6 +275,9 @@ def main():
     for file_path in tqdm(files, desc="Processing publications"):
         try:
             doc = extract_document(file_path)
+
+            if doc.was_ocred:
+                ocr_count += 1
 
             if doc.file_hash in processed_hashes:
                 # Load from cache
@@ -284,7 +288,10 @@ def main():
                     continue
 
             if doc.word_count < 50:
-                logger.warning(f"Skipping {file_path}: too little text extracted")
+                logger.warning(
+                    f"Skipping {file_path}: too little text extracted"
+                    f"{' (even after OCR)' if doc.was_ocred else ''}"
+                )
                 continue
 
             # Run classification pipeline
@@ -300,7 +307,7 @@ def main():
     elapsed = time.time() - start_time
     logger.info(
         f"Classification complete: {new_count} new, {cached_count} cached, "
-        f"{error_count} errors ({elapsed:.1f}s)"
+        f"{ocr_count} OCR'd, {error_count} errors ({elapsed:.1f}s)"
     )
 
     # Compute cross-publication edges
@@ -323,6 +330,7 @@ def main():
     print("LIBRARY CLERK - PIPELINE COMPLETE")
     print(f"{'='*60}")
     print(f"  Publications processed: {db_stats['publications']}")
+    print(f"  Scanned PDFs OCR'd: {ocr_count}")
     print(f"  Cross-publication edges: {db_stats['cross_edges']}")
     if db_stats['year_distribution']:
         years = sorted(db_stats['year_distribution'].keys())

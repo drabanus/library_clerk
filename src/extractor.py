@@ -2,11 +2,16 @@
 Text extraction from PDFs and ebooks.
 
 Handles PDF (via PyMuPDF), EPUB (via ebooklib), and basic metadata extraction.
+Detects scanned/image-only PDFs, renames them to *_noOCR.pdf, and runs OCR
+via ocrmypdf before continuing extraction.
 """
 
 import os
 import re
+import shutil
 import hashlib
+import logging
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,6 +21,13 @@ import ebooklib
 from ebooklib import epub
 from html.parser import HTMLParser
 
+logger = logging.getLogger(__name__)
+
+# Minimum average words per page to consider a PDF as having real text content.
+# Scanned documents typically yield 0-5 words per page from stray OCR artifacts
+# in metadata, while text-based PDFs yield 100+ words per page.
+MIN_WORDS_PER_PAGE = 20
+
 
 @dataclass
 class ExtractedDocument:
@@ -24,6 +36,7 @@ class ExtractedDocument:
     file_hash: str
     file_type: str  # "pdf", "epub"
     raw_text: str
+    was_ocred: bool = False
     title: Optional[str] = None
     authors: list[str] = field(default_factory=list)
     year: Optional[int] = None
@@ -77,10 +90,153 @@ def _clean_text(text: str) -> str:
     return text.strip()
 
 
+def _is_scanned_pdf(doc: fitz.Document) -> bool:
+    """
+    Detect whether a PDF is a scanned document (images only, no real text).
+
+    Checks each page for:
+      - Text content length (word count)
+      - Presence of embedded images
+
+    A PDF is considered scanned if most pages contain images but yield
+    fewer than MIN_WORDS_PER_PAGE words of extractable text on average.
+    """
+    if doc.page_count == 0:
+        return False
+
+    total_words = 0
+    pages_with_images = 0
+
+    for page in doc:
+        text = page.get_text("text").strip()
+        words = len(text.split()) if text else 0
+        total_words += words
+
+        image_list = page.get_images(full=True)
+        if image_list:
+            pages_with_images += 1
+
+    avg_words = total_words / doc.page_count
+
+    # Scanned: pages have images but very little extractable text
+    image_ratio = pages_with_images / doc.page_count
+    is_scanned = avg_words < MIN_WORDS_PER_PAGE and image_ratio > 0.5
+
+    if is_scanned:
+        logger.info(
+            f"  Scanned PDF detected: {avg_words:.0f} avg words/page, "
+            f"{pages_with_images}/{doc.page_count} pages with images"
+        )
+    else:
+        logger.debug(
+            f"  Text PDF: {avg_words:.0f} avg words/page, "
+            f"{pages_with_images}/{doc.page_count} pages with images"
+        )
+
+    return is_scanned
+
+
+def _run_ocr(pdf_path: str) -> str:
+    """
+    Run OCR on a scanned PDF.
+
+    1. Renames the original file from *.pdf to *_noOCR.pdf
+    2. Runs ocrmypdf to produce a text-layer PDF at the original path
+    3. Returns the path to the OCR'd PDF (= original path)
+
+    Raises RuntimeError if OCR fails.
+    """
+    original = Path(pdf_path)
+    stem = original.stem
+    no_ocr_name = f"{stem}_noOCR.pdf"
+    no_ocr_path = original.parent / no_ocr_name
+
+    # If the _noOCR version already exists, another run already renamed it.
+    # The current file at pdf_path is then already the OCR'd version.
+    if no_ocr_path.exists():
+        logger.info(f"  OCR backup already exists: {no_ocr_path}")
+        return str(original)
+
+    # Rename original → _noOCR.pdf
+    logger.info(f"  Renaming: {original.name} -> {no_ocr_name}")
+    shutil.move(str(original), str(no_ocr_path))
+
+    # Run ocrmypdf:  _noOCR.pdf  →  original.pdf
+    logger.info(f"  Running OCR: {no_ocr_name} -> {original.name}")
+    try:
+        result = subprocess.run(
+            [
+                "ocrmypdf",
+                "--skip-text",       # Don't re-OCR pages that already have text
+                "--optimize", "1",   # Light optimization
+                "--deskew",          # Fix skewed scans
+                "--clean",           # Clean up scan artifacts before OCR
+                "--quiet",
+                str(no_ocr_path),
+                str(original),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout per file
+        )
+
+        if result.returncode != 0:
+            # OCR failed — restore original file
+            stderr = result.stderr.strip()
+            logger.error(f"  OCR failed (exit {result.returncode}): {stderr}")
+            shutil.move(str(no_ocr_path), str(original))
+            raise RuntimeError(
+                f"ocrmypdf failed on {original.name}: {stderr}"
+            )
+
+        logger.info(f"  OCR complete: {original.name}")
+        return str(original)
+
+    except FileNotFoundError:
+        # ocrmypdf not installed — restore and raise
+        logger.error(
+            "  ocrmypdf not found. Install with: "
+            "pip install ocrmypdf && sudo apt install tesseract-ocr"
+        )
+        shutil.move(str(no_ocr_path), str(original))
+        raise RuntimeError(
+            "ocrmypdf is not installed. "
+            "Install: pip install ocrmypdf && sudo apt install tesseract-ocr"
+        )
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"  OCR timed out for {original.name}")
+        # Restore if OCR'd file wasn't produced
+        if not original.exists() and no_ocr_path.exists():
+            shutil.move(str(no_ocr_path), str(original))
+        raise RuntimeError(f"OCR timed out for {original.name}")
+
+
 def extract_pdf(path: str) -> ExtractedDocument:
-    """Extract text and metadata from a PDF file."""
+    """
+    Extract text and metadata from a PDF file.
+
+    If the PDF is detected as a scanned document (images with no text layer):
+      1. Original is renamed to *_noOCR.pdf
+      2. OCR is run via ocrmypdf, producing a text-layer PDF at the original path
+      3. Text is extracted from the new OCR'd PDF
+    """
     doc = fitz.open(path)
     metadata = doc.metadata or {}
+    num_pages = doc.page_count
+    was_ocred = False
+
+    # Check if this is a scanned document
+    if _is_scanned_pdf(doc):
+        doc.close()
+
+        # OCR pipeline: rename original, produce OCR'd version
+        path = _run_ocr(path)
+        was_ocred = True
+
+        # Re-open the OCR'd PDF
+        doc = fitz.open(path)
+        metadata = doc.metadata or {}
 
     pages_text = []
     for page in doc:
@@ -107,10 +263,11 @@ def extract_pdf(path: str) -> ExtractedDocument:
         file_hash=_compute_file_hash(path),
         file_type="pdf",
         raw_text=raw_text,
+        was_ocred=was_ocred,
         title=title if title and title.strip() else None,
         authors=authors,
         year=year,
-        num_pages=len(pages_text),
+        num_pages=num_pages,
         file_size_bytes=os.path.getsize(path),
     )
 
@@ -175,6 +332,7 @@ def extract_document(path: str) -> ExtractedDocument:
 def scan_library(paths: list[str], extensions: list[str]) -> list[str]:
     """
     Recursively scan directories for publication files.
+    Skips *_noOCR.pdf files (these are the pre-OCR originals).
     Returns sorted list of absolute file paths.
     """
     found = set()
@@ -185,13 +343,18 @@ def scan_library(paths: list[str], extensions: list[str]) -> list[str]:
         if not base.exists():
             continue
         if base.is_file():
-            if base.suffix.lower() in extensions:
+            if base.suffix.lower() in extensions and not _is_noocr_backup(base):
                 found.add(str(base))
             continue
         for root, _dirs, files in os.walk(base):
             for fname in files:
                 fpath = Path(root) / fname
-                if fpath.suffix.lower() in extensions:
+                if fpath.suffix.lower() in extensions and not _is_noocr_backup(fpath):
                     found.add(str(fpath.resolve()))
 
     return sorted(found)
+
+
+def _is_noocr_backup(path: Path) -> bool:
+    """Check if a file is a *_noOCR.pdf backup of a scanned original."""
+    return path.stem.endswith("_noOCR")

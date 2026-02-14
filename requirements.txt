@@ -3,6 +3,9 @@ PyMuPDF>=1.23.0
 ebooklib>=0.18
 python-docx>=1.1.0
 
+# OCR for scanned PDFs (requires tesseract-ocr system package)
+ocrmypdf>=16.0.0
+
 # LLM inference via Ollama
 ollama>=0.3.0
 
