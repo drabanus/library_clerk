@@ -22,8 +22,8 @@ ollama:
   ontology_model: qwen2.5:7b
   # Max tokens for text chunks sent to LLM
   max_chunk_tokens: 4000
-  # Request timeout in seconds
-  timeout: 120
+  # Request timeout in seconds (includes model loading into VRAM on first call)
+  timeout: 300
 
 graph:
   # Backend: "networkx" (lightweight, no server needed) or "neo4j"

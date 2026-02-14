@@ -29,7 +29,17 @@ class OllamaClient:
         self.base_url = base_url
         self.timeout = timeout
         self.max_retries = max_retries
-        self._client = ollama.Client(host=base_url, timeout=timeout)
+        # The httpx timeout covers the entire request including model loading
+        # into VRAM on first call, which can take several minutes.
+        # Use a generous read timeout while keeping connect timeout short.
+        import httpx
+        http_timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(timeout),
+            write=10.0,
+            pool=10.0,
+        )
+        self._client = ollama.Client(host=base_url, timeout=http_timeout)
         self._call_count = 0
         self._total_tokens = 0
 
@@ -84,7 +94,8 @@ class OllamaClient:
 
             except Exception as e:
                 last_error = e
-                wait = 2 ** attempt
+                # Longer backoff: 10s, 30s, 60s — model loading can take a while
+                wait = [10, 30, 60][min(attempt, 2)]
                 logger.warning(
                     f"Ollama call failed (attempt {attempt + 1}/{self.max_retries}): "
                     f"{e}. Retrying in {wait}s..."
