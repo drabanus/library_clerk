@@ -14,53 +14,36 @@ library:
 
 # ─── LLM backend ───────────────────────────────────────────────────
 # Set "backend" to one of: ollama, claude, perplexity
-# Only the active backend section needs to be filled in.
-# The "ollama" section is also read as a fallback when "llm" is absent.
-#
-# To switch backend, uncomment the desired section below and comment
-# out the others, or simply change the "backend:" value.
-
-# Pick ONE backend by setting "backend:" to: ollama, claude, or perplexity
-# Then fill in the matching settings below.
+# Then fill in the matching sub-section below.
 llm:
-  backend: ollama                     # <-- change to "claude" or "perplexity"
+  backend: ollama
 
-  # -- Ollama (local inference) ------------------------------------
-  base_url: http://localhost:11434
-  classifier_model: ministral-3:3b
-  # qwen2.5:7b recommended — strong at both structured JSON and semantic reasoning
-  # alternatives: mistral:7b, deepseek-r1:8b, phi4-mini, gemma2:9b
-  ontology_model: qwen2.5:7b
-  max_chunk_tokens: 4000
-  # Context window in tokens.  Ollama defaults to only 2048 regardless of
-  # what the model supports, which silently truncates our prompts (~3800+
-  # tokens for Stage 1).  8192 covers all prompts with room for output.
-  num_ctx: 8192
-  # Request timeout in seconds (auto-scaled 5× on CPU-only machines)
-  timeout: 300
+  ollama:
+    base_url: http://localhost:11434
+    classifier_model: ministral-3:3b
+    # qwen2.5:7b recommended — strong at structured JSON and semantic reasoning
+    # alternatives: mistral:7b, deepseek-r1:8b, phi4-mini, gemma2:9b
+    ontology_model: qwen2.5:7b
+    max_chunk_tokens: 4000
+    # Ollama defaults to only 2048 tokens context regardless of the model.
+    # Our prompts need ~3800+ tokens, so 8192 is the safe minimum.
+    num_ctx: 8192
+    # Request timeout in seconds (auto-scaled 5× on CPU-only machines)
+    timeout: 300
 
-  # -- Claude API --------------------------------------------------
-  # Uncomment and set backend: claude above to use.
-  # api_key: sk-ant-...              # or set ANTHROPIC_API_KEY env var
-  # classifier_model: claude-sonnet-4-20250514   # (override Ollama models above)
-  # ontology_model: claude-sonnet-4-20250514
-  # max_tokens: 4096                 # max output tokens per request
+  claude:
+    # Paste your key inside the quotes, or set ANTHROPIC_API_KEY env var
+    api_key: ""
+    classifier_model: claude-sonnet-4-20250514
+    ontology_model: claude-sonnet-4-20250514
+    max_tokens: 4096
 
-  # -- Perplexity Pro API ------------------------------------------
-  # Uncomment and set backend: perplexity above to use.
-  # api_key: pplx-...                # or set PERPLEXITY_API_KEY env var
-  # classifier_model: sonar-pro      # (override Ollama models above)
-  # ontology_model: sonar-pro
-  # max_tokens: 4096
-
-# Legacy section — still supported when "llm" is absent.
-ollama:
-  base_url: http://localhost:11434
-  classifier_model: ministral-3:3b
-  ontology_model: qwen2.5:7b
-  max_chunk_tokens: 4000
-  num_ctx: 8192
-  timeout: 300
+  perplexity:
+    # Paste your key inside the quotes, or set PERPLEXITY_API_KEY env var
+    api_key: ""
+    classifier_model: sonar-pro
+    ontology_model: sonar-pro
+    max_tokens: 4096
 
 graph:
   # Backend: "networkx" (lightweight, no server needed) or "neo4j"
