@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import fitz  # PyMuPDF
+
+# Suppress noisy MuPDF warnings about malformed PDF resources
+# (e.g. "cannot find ExtGState resource 'A1'").  These are cosmetic —
+# text extraction still works — and they clutter the progress output.
+fitz.TOOLS.mupdf_display_errors(False)
+
 import ebooklib
 from ebooklib import epub
 from html.parser import HTMLParser

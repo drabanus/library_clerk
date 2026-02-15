@@ -16,6 +16,7 @@ Stage 2 (deepseek-coder:6.7b):
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -184,17 +185,21 @@ class PublicationClassifier:
         logger.info(f"Classifying: {doc.file_path}")
 
         # Stage 1: Classification
+        t0 = time.monotonic()
         classification, raw_s1 = self._stage1_classify(doc)
+        s1_secs = time.monotonic() - t0
         logger.info(
-            f"  Stage 1 complete: {classification.title} "
+            f"  Stage 1 complete ({s1_secs:.1f}s): {classification.title} "
             f"({len(classification.keywords)} keywords, "
             f"{len(classification.topics)} topics)"
         )
 
         # Stage 2: Ontology generation
+        t1 = time.monotonic()
         ontology, raw_s2 = self._stage2_ontology(classification)
+        s2_secs = time.monotonic() - t1
         logger.info(
-            f"  Stage 2 complete: {len(ontology.graph_nodes)} nodes, "
+            f"  Stage 2 complete ({s2_secs:.1f}s): {len(ontology.graph_nodes)} nodes, "
             f"{len(ontology.graph_edges)} edges"
         )
 
