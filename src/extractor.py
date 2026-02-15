@@ -358,7 +358,7 @@ def scan_library(paths: list[str], extensions: list[str]) -> list[str]:
                 if fpath.suffix.lower() in extensions and not _is_noocr_backup(fpath):
                     found.add(str(fpath.resolve()))
 
-    return sorted(found)
+    return sorted(found, key=lambda p: os.path.getsize(p))
 
 
 def _is_noocr_backup(path: Path) -> bool:
