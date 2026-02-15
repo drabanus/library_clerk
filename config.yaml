@@ -20,9 +20,12 @@ library:
 # To switch backend, uncomment the desired section below and comment
 # out the others, or simply change the "backend:" value.
 
-# -- Option A: Local inference via Ollama (default) --
+# Pick ONE backend by setting "backend:" to: ollama, claude, or perplexity
+# Then fill in the matching settings below.
 llm:
-  backend: ollama
+  backend: ollama                     # <-- change to "claude" or "perplexity"
+
+  # -- Ollama (local inference) ------------------------------------
   base_url: http://localhost:11434
   classifier_model: ministral-3:3b
   # qwen2.5:7b recommended — strong at both structured JSON and semantic reasoning
@@ -36,21 +39,19 @@ llm:
   # Request timeout in seconds (auto-scaled 5× on CPU-only machines)
   timeout: 300
 
-# -- Option B: Anthropic Claude API --
-# llm:
-#   backend: claude
-#   api_key: sk-ant-...              # or set ANTHROPIC_API_KEY env var
-#   classifier_model: claude-sonnet-4-20250514
-#   ontology_model: claude-sonnet-4-20250514
-#   max_tokens: 4096                 # max output tokens per request
+  # -- Claude API --------------------------------------------------
+  # Uncomment and set backend: claude above to use.
+  # api_key: sk-ant-...              # or set ANTHROPIC_API_KEY env var
+  # classifier_model: claude-sonnet-4-20250514   # (override Ollama models above)
+  # ontology_model: claude-sonnet-4-20250514
+  # max_tokens: 4096                 # max output tokens per request
 
-# -- Option C: Perplexity Pro API --
-# llm:
-#   backend: perplexity
-#   api_key: pplx-...                # or set PERPLEXITY_API_KEY env var
-#   classifier_model: sonar-pro
-#   ontology_model: sonar-pro
-#   max_tokens: 4096
+  # -- Perplexity Pro API ------------------------------------------
+  # Uncomment and set backend: perplexity above to use.
+  # api_key: pplx-...                # or set PERPLEXITY_API_KEY env var
+  # classifier_model: sonar-pro      # (override Ollama models above)
+  # ontology_model: sonar-pro
+  # max_tokens: 4096
 
 # Legacy section — still supported when "llm" is absent.
 ollama:
