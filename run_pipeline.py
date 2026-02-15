@@ -26,16 +26,19 @@ and the full graph is persisted.
 
 import argparse
 import logging
+import select
 import sys
+import termios
 import time
+import tty
 from pathlib import Path
+from threading import Event, Thread
 
 import yaml
-from tqdm import tqdm
 
 from src.extractor import scan_library, extract_document, ExtractedDocument
 from src.llm_factory import create_llm_backend
-from src.classifier import PublicationClassifier, PublicationAnalysis
+from src.classifier import PublicationClassifier, PublicationAnalysis, SkipFile
 from src.graph_manager import create_backend, GraphBackend
 from src.persistence import PersistenceStore
 
@@ -45,6 +48,103 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("library_clerk")
+
+
+# ─── Interactive progress display + skip-key listener ────────────────
+
+class ProgressDisplay:
+    """
+    Rich-ish terminal progress for the processing loop.
+
+    Shows a live status line with file counter, filename, current stage,
+    and elapsed time.  Listens for 'S' keypress to signal a file-skip.
+    """
+
+    def __init__(self, total: int):
+        self.total = total
+        self.current = 0
+        self._stage = ""
+        self._file = ""
+        self._file_start = 0.0
+        self._skip_event = Event()
+        self._stop_event = Event()
+        self._listener: Thread | None = None
+        self._is_tty = sys.stdin.isatty()
+        self._old_term: list | None = None
+
+    # -- public API used by the processing loop -----------------------
+
+    def start(self) -> None:
+        if self._is_tty:
+            self._start_key_listener()
+            print("  (press S to skip the current file)\n")
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._listener and self._listener.is_alive():
+            self._listener.join(timeout=1)
+        if self._old_term is not None:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_term)
+            self._old_term = None
+
+    def begin_file(self, index: int, file_path: str) -> None:
+        """Called when we start processing a new file."""
+        self.current = index + 1
+        self._file = Path(file_path).name
+        self._file_start = time.monotonic()
+        self._skip_event.clear()
+        self._update("extracting text")
+
+    def set_stage(self, stage: str) -> None:
+        """Callback handed to classifier.classify(on_stage=...)."""
+        self._update(stage)
+
+    def should_skip(self) -> bool:
+        """Callback handed to classifier.classify(check_skip=...)."""
+        return self._skip_event.is_set()
+
+    def file_done(self, label: str) -> None:
+        elapsed = time.monotonic() - self._file_start
+        self._clear_line()
+        print(f"  [{self.current}/{self.total}] {self._file} — {label} ({elapsed:.1f}s)")
+
+    def file_skipped(self, file_path: str) -> None:
+        self._clear_line()
+        print(f"  [{self.current}/{self.total}] SKIPPED {file_path}")
+
+    # -- internals ----------------------------------------------------
+
+    def _update(self, stage: str) -> None:
+        self._stage = stage
+        elapsed = time.monotonic() - self._file_start
+        line = f"  [{self.current}/{self.total}] {self._file} — {stage} ({elapsed:.0f}s)"
+        self._clear_line()
+        print(line, end="", flush=True)
+
+    @staticmethod
+    def _clear_line() -> None:
+        print("\r\033[K", end="", flush=True)
+
+    def _start_key_listener(self) -> None:
+        """Listen for 'S' on stdin using raw-mode, non-blocking reads."""
+        fd = sys.stdin.fileno()
+        try:
+            self._old_term = termios.tcgetattr(fd)
+        except termios.error:
+            return  # not a real terminal
+        tty.setcbreak(fd)
+
+        def _reader() -> None:
+            while not self._stop_event.is_set():
+                # Use select with a short timeout so we can check _stop_event
+                rlist, _, _ = select.select([sys.stdin], [], [], 0.2)
+                if rlist:
+                    ch = sys.stdin.read(1)
+                    if ch == "S":
+                        self._skip_event.set()
+
+        self._listener = Thread(target=_reader, daemon=True)
+        self._listener.start()
 
 
 def load_config(config_path: str) -> dict:
@@ -311,46 +411,76 @@ def main():
     new_count = 0
     cached_count = 0
     ocr_count = 0
+    skip_count = 0
     error_count = 0
 
     start_time = time.time()
 
-    for file_path in tqdm(files, desc="Processing publications"):
-        try:
-            doc = extract_document(file_path)
+    progress = ProgressDisplay(total=len(files))
+    progress.start()
 
-            if doc.was_ocred:
-                ocr_count += 1
+    try:
+        for idx, file_path in enumerate(files):
+            progress.begin_file(idx, file_path)
+            try:
+                doc = extract_document(file_path)
 
-            if doc.file_hash in processed_hashes:
-                # Load from cache
-                cached = store.load_analysis(doc.file_hash)
-                if cached:
-                    analyses.append(cached)
-                    cached_count += 1
+                if doc.was_ocred:
+                    ocr_count += 1
+
+                if doc.file_hash in processed_hashes:
+                    # Load from cache
+                    cached = store.load_analysis(doc.file_hash)
+                    if cached:
+                        analyses.append(cached)
+                        cached_count += 1
+                        progress.file_done("cached")
+                        continue
+
+                if doc.word_count < 50:
+                    progress.file_done("too little text, skipped")
+                    logger.warning(
+                        f"Skipping {file_path}: too little text extracted"
+                        f"{' (even after OCR)' if doc.was_ocred else ''}"
+                    )
                     continue
 
-            if doc.word_count < 50:
-                logger.warning(
-                    f"Skipping {file_path}: too little text extracted"
-                    f"{' (even after OCR)' if doc.was_ocred else ''}"
+                # Check if skip was pressed during extraction
+                if progress.should_skip():
+                    raise SkipFile(file_path)
+
+                # Run classification pipeline
+                analysis = classifier.classify(
+                    doc,
+                    on_stage=progress.set_stage,
+                    check_skip=progress.should_skip,
                 )
-                continue
+                analyses.append(analysis)
+                store.store_analysis(analysis)
+                new_count += 1
+                title = analysis.classification.title
+                progress.file_done(f"done — {title}")
 
-            # Run classification pipeline
-            analysis = classifier.classify(doc)
-            analyses.append(analysis)
-            store.store_analysis(analysis)
-            new_count += 1
+            except SkipFile:
+                progress.file_skipped(file_path)
+                skip_count += 1
 
-        except Exception as e:
-            logger.error(f"Error processing {file_path}: {e}", exc_info=True)
-            error_count += 1
+            except KeyboardInterrupt:
+                progress.file_done("interrupted")
+                logger.warning("Interrupted by user — saving progress so far")
+                break
+
+            except Exception as e:
+                progress.file_done(f"ERROR: {e}")
+                logger.error(f"Error processing {file_path}: {e}", exc_info=True)
+                error_count += 1
+    finally:
+        progress.stop()
 
     elapsed = time.time() - start_time
     logger.info(
         f"Classification complete: {new_count} new, {cached_count} cached, "
-        f"{ocr_count} OCR'd, {error_count} errors ({elapsed:.1f}s)"
+        f"{ocr_count} OCR'd, {skip_count} skipped, {error_count} errors ({elapsed:.1f}s)"
     )
 
     # Compute cross-publication edges

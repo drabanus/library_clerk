@@ -163,6 +163,10 @@ Rules:
   DISCUSSES, IN_DOMAIN, SUBTOPIC_OF, RELATED_CONCEPT, ENABLES, REQUIRES, CONTRASTS"""
 
 
+class SkipFile(Exception):
+    """Raised when the user requests skipping the current file."""
+
+
 class PublicationClassifier:
     """Two-stage sequential classification pipeline."""
 
@@ -176,16 +180,28 @@ class PublicationClassifier:
         self.classifier_model = classifier_model
         self.ontology_model = ontology_model
 
-    def classify(self, doc: ExtractedDocument) -> PublicationAnalysis:
+    def classify(
+        self,
+        doc: ExtractedDocument,
+        on_stage: Any | None = None,
+        check_skip: Any | None = None,
+    ) -> PublicationAnalysis:
         """
         Run full two-stage classification pipeline on a document.
 
-        Stage 1: Classification with ministral-3:3b
-        Stage 2: Ontology generation with deepseek-coder:6.7b
+        Stage 1: Classification with classifier_model
+        Stage 2: Ontology generation with ontology_model
+
+        Args:
+            on_stage: optional callback(stage_name: str) for progress reporting.
+            check_skip: optional callable() -> bool; if it returns True between
+                        stages the file is skipped by raising SkipFile.
         """
         logger.info(f"Classifying: {doc.file_path}")
 
         # Stage 1: Classification
+        if on_stage:
+            on_stage("Stage 1: classifying")
         t0 = time.monotonic()
         classification, raw_s1 = self._stage1_classify(doc)
         s1_secs = time.monotonic() - t0
@@ -195,7 +211,13 @@ class PublicationClassifier:
             f"{len(classification.topics)} topics)"
         )
 
+        # Check for skip request between stages
+        if check_skip and check_skip():
+            raise SkipFile(doc.file_path)
+
         # Stage 2: Ontology generation
+        if on_stage:
+            on_stage("Stage 2: ontology")
         t1 = time.monotonic()
         ontology, raw_s2 = self._stage2_ontology(classification)
         s2_secs = time.monotonic() - t1
