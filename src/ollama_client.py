@@ -1,26 +1,24 @@
 """
-Ollama LLM client with retry logic and structured output parsing.
+Ollama LLM backend with GPU detection and timeout auto-scaling.
 
-Provides a clean interface for sequential model invocation:
+Provides local inference via Ollama for:
   1. ministral-3:3b  -> fast classification, keyword extraction
-  2. deepseek-coder:6.7b -> structured ontology generation
+  2. qwen2.5:7b      -> structured ontology generation
 """
 
-import json
-import time
 import logging
-import re
-from typing import Any, Optional
+from typing import Optional
 
 import ollama
 
-from .gpu_probe import probe_gpu, get_ollama_options, GpuInfo
+from .gpu_probe import probe_gpu, get_ollama_options
+from .llm_backend import LLMBackend
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaClient:
-    """Wrapper around the Ollama Python client with retry and JSON parsing."""
+class OllamaClient(LLMBackend):
+    """Ollama local-inference backend with GPU auto-detection."""
 
     # CPU inference is much slower; scale the read timeout so requests
     # don't time out before the model finishes generating.
@@ -32,10 +30,8 @@ class OllamaClient:
         timeout: int = 120,
         max_retries: int = 3,
     ):
+        super().__init__(max_retries=max_retries)
         self.base_url = base_url
-        self.max_retries = max_retries
-        self._call_count = 0
-        self._total_tokens = 0
 
         # Probe GPU and derive Ollama runtime options
         self.gpu_info = probe_gpu()
@@ -59,27 +55,18 @@ class OllamaClient:
         )
         self._client = ollama.Client(host=base_url, timeout=http_timeout)
 
-    def generate(
+    @property
+    def name(self) -> str:
+        return "Ollama"
+
+    def _call(
         self,
         model: str,
         prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.3,
-        format_json: bool = False,
+        system: Optional[str],
+        temperature: float,
+        format_json: bool,
     ) -> str:
-        """
-        Generate a response from a model.
-
-        Args:
-            model: Ollama model name (e.g. "ministral-3:3b")
-            prompt: User prompt
-            system: Optional system prompt
-            temperature: Sampling temperature (lower = more deterministic)
-            format_json: If True, request JSON output format
-
-        Returns:
-            The model's response text.
-        """
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -87,87 +74,24 @@ class OllamaClient:
 
         options = {"temperature": temperature, **self._hw_options}
 
-        last_error = None
-        for attempt in range(self.max_retries):
-            try:
-                kwargs = {
-                    "model": model,
-                    "messages": messages,
-                    "options": options,
-                }
-                if format_json:
-                    kwargs["format"] = "json"
+        kwargs: dict = {
+            "model": model,
+            "messages": messages,
+            "options": options,
+        }
+        if format_json:
+            kwargs["format"] = "json"
 
-                response = self._client.chat(**kwargs)
-                self._call_count += 1
+        response = self._client.chat(**kwargs)
 
-                content = response["message"]["content"]
+        if "eval_count" in response:
+            self._total_tokens += response.get("eval_count", 0)
 
-                if "eval_count" in response:
-                    self._total_tokens += response.get("eval_count", 0)
+        return response["message"]["content"]
 
-                return content.strip()
-
-            except Exception as e:
-                last_error = e
-                # Longer backoff: 10s, 30s, 60s — model loading can take a while
-                wait = [10, 30, 60][min(attempt, 2)]
-                logger.warning(
-                    f"Ollama call failed (attempt {attempt + 1}/{self.max_retries}): "
-                    f"{e}. Retrying in {wait}s..."
-                )
-                time.sleep(wait)
-
-        raise ConnectionError(
-            f"Ollama failed after {self.max_retries} attempts: {last_error}"
-        )
-
-    def generate_json(
-        self,
-        model: str,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.2,
-    ) -> dict[str, Any]:
-        """
-        Generate a response and parse it as JSON.
-        Falls back to extracting JSON from markdown code blocks.
-        """
-        raw = self.generate(
-            model=model,
-            prompt=prompt,
-            system=system,
-            temperature=temperature,
-            format_json=True,
-        )
-        return self._parse_json(raw)
-
-    def _parse_json(self, text: str) -> dict[str, Any]:
-        """Parse JSON from LLM output, handling common formatting issues."""
-        # Direct parse
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Try extracting from code blocks
-        code_block = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-        if code_block:
-            try:
-                return json.loads(code_block.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # Try finding first { ... } block
-        brace_match = re.search(r"\{.*\}", text, re.DOTALL)
-        if brace_match:
-            try:
-                return json.loads(brace_match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning(f"Failed to parse JSON from LLM output: {text[:200]}...")
-        return {"raw_response": text, "_parse_error": True}
+    def _backoff(self, attempt: int) -> int:
+        """Longer backoff for Ollama: model loading can take a while."""
+        return [10, 30, 60][min(attempt, 2)]
 
     def check_models(self, models: list[str]) -> dict[str, bool]:
         """Check which models are available locally."""
@@ -177,7 +101,6 @@ class OllamaClient:
             for m in response.models:
                 name = m.model or ""
                 available_names.add(name)
-                # Also add without tag for partial matching
                 base_name = name.split(":")[0]
                 available_names.add(base_name)
 
@@ -196,8 +119,6 @@ class OllamaClient:
 
     @property
     def stats(self) -> dict:
-        return {
-            "total_calls": self._call_count,
-            "total_tokens": self._total_tokens,
-            "compute": self.gpu_info.summary,
-        }
+        base = super().stats
+        base["compute"] = self.gpu_info.summary
+        return base

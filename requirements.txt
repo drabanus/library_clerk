@@ -6,8 +6,10 @@ python-docx>=1.1.0
 # OCR for scanned PDFs (requires tesseract-ocr system package)
 ocrmypdf>=16.0.0
 
-# LLM inference via Ollama
+# LLM inference — local via Ollama, or cloud APIs
 ollama>=0.3.0
+anthropic>=0.39.0       # optional: for Claude backend
+openai>=1.50.0          # optional: for Perplexity backend (OpenAI-compat)
 
 # Graph databases
 neo4j>=5.0.0

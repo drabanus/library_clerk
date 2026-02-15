@@ -34,7 +34,7 @@ import yaml
 from tqdm import tqdm
 
 from src.extractor import scan_library, extract_document, ExtractedDocument
-from src.ollama_client import OllamaClient
+from src.llm_factory import create_llm_backend
 from src.classifier import PublicationClassifier, PublicationAnalysis
 from src.graph_manager import create_backend, GraphBackend
 from src.persistence import PersistenceStore
@@ -270,22 +270,16 @@ def main():
             print(f"  {f}")
         sys.exit(0)
 
-    # Initialize components
-    ollama_cfg = config.get("ollama", {})
-    client = OllamaClient(
-        base_url=ollama_cfg.get("base_url", "http://localhost:11434"),
-        timeout=ollama_cfg.get("timeout", 120),
-    )
+    # Initialize LLM backend (ollama / claude / perplexity — set in config)
+    client, classifier_model, ontology_model = create_llm_backend(config)
 
-    # Report compute hardware
-    logger.info(f"Compute: {client.gpu_info.summary}")
-    if not client.gpu_info.has_gpu:
-        logger.warning("No GPU found — using CPU inference (this will be slower)")
+    # Report compute hardware for local backends
+    if hasattr(client, "gpu_info"):
+        logger.info(f"Compute: {client.gpu_info.summary}")
+        if not client.gpu_info.has_gpu:
+            logger.warning("No GPU found — using CPU inference (this will be slower)")
 
-    # Check model availability
-    classifier_model = ollama_cfg.get("classifier_model", "ministral-3:3b")
-    ontology_model = ollama_cfg.get("ontology_model", "deepseek-coder:6.7b")
-
+    # Check model availability (API backends always return True)
     availability = client.check_models([classifier_model, ontology_model])
     for model, available in availability.items():
         status = "available" if available else "NOT FOUND"

@@ -20,7 +20,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .ollama_client import OllamaClient
+from .ollama_client import OllamaClient  # noqa: F401 — backward compat
+from .llm_backend import LLMBackend
 from .extractor import ExtractedDocument
 
 logger = logging.getLogger(__name__)
@@ -167,7 +168,7 @@ class PublicationClassifier:
 
     def __init__(
         self,
-        client: OllamaClient,
+        client: LLMBackend,
         classifier_model: str = "ministral-3:3b",
         ontology_model: str = "deepseek-coder:6.7b",
     ):
