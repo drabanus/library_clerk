@@ -15,6 +15,15 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
+class BillingError(Exception):
+    """Fatal: the API account has insufficient credits or is suspended.
+
+    This error must NOT be retried — it will persist until the user
+    tops up their account.  It propagates straight through the retry
+    loop and terminates the pipeline.
+    """
+
+
 class LLMBackend(ABC):
     """Base class every LLM backend must implement."""
 
@@ -48,6 +57,8 @@ class LLMBackend(ABC):
                 )
                 self._call_count += 1
                 return text.strip()
+            except BillingError:
+                raise  # fatal — do not retry
             except Exception as e:
                 last_error = e
                 wait = self._backoff(attempt)

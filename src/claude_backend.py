@@ -24,7 +24,7 @@ def _lazy_import():
         )
 
 
-from .llm_backend import LLMBackend
+from .llm_backend import LLMBackend, BillingError
 
 
 class ClaudeBackend(LLMBackend):
@@ -73,7 +73,19 @@ class ClaudeBackend(LLMBackend):
         if system:
             kwargs["system"] = system
 
-        response = self._client.messages.create(**kwargs)
+        anthropic = _lazy_import()
+        try:
+            response = self._client.messages.create(**kwargs)
+        except anthropic.BadRequestError as e:
+            body = getattr(e, "body", {}) or {}
+            err = body.get("error", {}) if isinstance(body, dict) else {}
+            msg = err.get("message", str(e)) if isinstance(err, dict) else str(e)
+            if "credit balance" in msg.lower() or "billing" in msg.lower():
+                raise BillingError(
+                    "Anthropic API credit balance exhausted. "
+                    "Top up at https://console.anthropic.com/settings/billing"
+                ) from e
+            raise  # some other 400 error — let the retry loop handle it
 
         # Accumulate token usage
         if hasattr(response, "usage") and response.usage:

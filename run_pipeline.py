@@ -39,6 +39,7 @@ import yaml
 from src.extractor import scan_library, extract_document, ExtractedDocument
 from src.llm_factory import create_llm_backend
 from src.classifier import PublicationClassifier, PublicationAnalysis, SkipFile
+from src.llm_backend import BillingError
 from src.graph_manager import create_backend, GraphBackend
 from src.persistence import PersistenceStore
 
@@ -464,6 +465,15 @@ def main():
             except SkipFile:
                 progress.file_skipped(file_path)
                 skip_count += 1
+
+            except BillingError as e:
+                progress.file_done("BILLING ERROR")
+                logger.error(str(e))
+                print(
+                    f"\n  FATAL: {e}\n"
+                    f"  Pipeline stopped. Progress up to this point has been saved.\n"
+                )
+                break
 
             except KeyboardInterrupt:
                 progress.file_done("interrupted")
