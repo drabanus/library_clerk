@@ -24,18 +24,27 @@ class OllamaClient(LLMBackend):
     # don't time out before the model finishes generating.
     _CPU_TIMEOUT_MULTIPLIER = 5
 
+    # Ollama defaults to num_ctx=2048 regardless of what the model
+    # supports.  Our Stage 1 prompt alone needs ~3800 tokens, so the
+    # default silently truncates the input and produces garbage.
+    _DEFAULT_NUM_CTX = 8192
+
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
         timeout: int = 120,
         max_retries: int = 3,
+        num_ctx: int = 0,
     ):
         super().__init__(max_retries=max_retries)
         self.base_url = base_url
+        self.num_ctx = num_ctx or self._DEFAULT_NUM_CTX
 
         # Probe GPU and derive Ollama runtime options
         self.gpu_info = probe_gpu()
         self._hw_options = get_ollama_options(self.gpu_info)
+        self._hw_options["num_ctx"] = self.num_ctx
+        logger.info(f"Ollama context window: {self.num_ctx} tokens")
 
         # Widen the read timeout for CPU-only inference so that large
         # models (e.g. deepseek-coder:6.7b) have time to finish.

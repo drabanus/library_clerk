@@ -82,6 +82,7 @@ def create_llm_backend(config: dict[str, Any]) -> tuple[LLMBackend, str, str]:
             base_url=llm_cfg.get("base_url", "http://localhost:11434"),
             timeout=llm_cfg.get("timeout", 120),
             max_retries=llm_cfg.get("max_retries", 3),
+            num_ctx=llm_cfg.get("num_ctx", 0),
         )
 
     elif backend_name == "claude":

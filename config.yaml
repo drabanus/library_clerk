@@ -29,6 +29,10 @@ llm:
   # alternatives: mistral:7b, deepseek-r1:8b, phi4-mini, gemma2:9b
   ontology_model: qwen2.5:7b
   max_chunk_tokens: 4000
+  # Context window in tokens.  Ollama defaults to only 2048 regardless of
+  # what the model supports, which silently truncates our prompts (~3800+
+  # tokens for Stage 1).  8192 covers all prompts with room for output.
+  num_ctx: 8192
   # Request timeout in seconds (auto-scaled 5× on CPU-only machines)
   timeout: 300
 
@@ -54,6 +58,7 @@ ollama:
   classifier_model: ministral-3:3b
   ontology_model: qwen2.5:7b
   max_chunk_tokens: 4000
+  num_ctx: 8192
   timeout: 300
 
 graph:
