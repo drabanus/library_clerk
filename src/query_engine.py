@@ -97,6 +97,56 @@ class QueryEngine:
 
         return results
 
+    def get_publications_for_node(self, node_id: str) -> list[dict]:
+        """
+        Find all Publication nodes connected to a given node.
+
+        Walks the node's neighbors looking for Publication nodes,
+        then enriches each with title/authors/year from the store.
+        """
+        neighbors = self.graph.get_neighbors(node_id)
+        pub_neighbors = [
+            n for n in neighbors
+            if n.get("node_type") == "Publication"
+        ]
+
+        results = []
+        seen = set()
+        for nb in pub_neighbors:
+            pub_id = nb["id"]
+            if pub_id in seen:
+                continue
+            seen.add(pub_id)
+            # Extract file_hash from the pub node id (pub_<hash12>)
+            file_hash = nb.get("file_hash")
+            if not file_hash and pub_id.startswith("pub_"):
+                hash_prefix = pub_id[4:]  # after "pub_"
+                # Look up in the store by prefix
+                for summary in self.store.get_publications_summary():
+                    if summary["file_hash"].startswith(hash_prefix):
+                        file_hash = summary["file_hash"]
+                        break
+
+            title = nb.get("title") or nb.get("label") or pub_id
+            entry = {
+                "node_id": pub_id,
+                "title": title,
+                "relation": nb.get("_edge_relation", ""),
+            }
+
+            # Enrich from persistence if possible
+            if file_hash:
+                analysis = self.store.load_analysis(file_hash)
+                if analysis:
+                    entry["file_hash"] = file_hash
+                    entry["title"] = analysis.classification.title
+                    entry["authors"] = analysis.classification.authors
+                    entry["year"] = analysis.classification.year
+
+            results.append(entry)
+
+        return results
+
     def get_clusters(self) -> list[dict]:
         """
         Identify clusters of related publications based on shared topics/domains.

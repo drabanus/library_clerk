@@ -142,4 +142,33 @@ def create_app(config: dict) -> Flask:
         neighbors = graph.get_neighbors(node_id)
         return jsonify({"node": node, "neighbors": neighbors})
 
+    @app.route("/api/node/<node_id>/publications")
+    def api_node_publications(node_id):
+        """Get all publications linked to a given node."""
+        pubs = engine.get_publications_for_node(node_id)
+        return jsonify(pubs)
+
+    @app.route("/api/edge", methods=["POST"])
+    def api_add_edge():
+        """Manually add an edge between two nodes."""
+        data = request.get_json(silent=True) or {}
+        source = data.get("source", "").strip()
+        target = data.get("target", "").strip()
+        relation = data.get("relation", "").strip()
+
+        if not source or not target or not relation:
+            return jsonify({"error": "source, target, and relation are required"}), 400
+
+        if not graph.get_node(source):
+            return jsonify({"error": f"Source node '{source}' not found"}), 404
+        if not graph.get_node(target):
+            return jsonify({"error": f"Target node '{target}' not found"}), 404
+
+        weight = float(data.get("weight", 0.8))
+        graph.add_edge(source, target, relation.upper(), weight=weight)
+        store.store_graph_state("full_graph", graph.export_json())
+
+        logger.info(f"Manual edge added: {source} -[{relation.upper()}]-> {target}")
+        return jsonify({"ok": True, "source": source, "target": target, "relation": relation.upper()})
+
     return app

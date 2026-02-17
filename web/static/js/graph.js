@@ -565,6 +565,10 @@ async function showPublicationDetail(fileHash) {
             `;
         }
 
+        // Manual link creation for publications too
+        const pubNodeId = `pub_${fileHash.substring(0, 12)}`;
+        html += buildAddLinkForm(pubNodeId);
+
         document.getElementById('detail-content').innerHTML = html;
         openDetail();
     } catch (err) {
@@ -581,11 +585,12 @@ async function showNodeDetail(node) {
         return;
     }
 
+    const nodeColor = NODE_COLORS[node.node_type] || '#6e7681';
+
     let html = `
         <div class="detail-title">${node.label || node.id}</div>
         <div style="color: var(--text-secondary);">
-            <span class="tag" style="border-color: ${NODE_COLORS[node.node_type] || '#6e7681'};
-                color: ${NODE_COLORS[node.node_type] || '#6e7681'}">
+            <span class="tag" style="border-color: ${nodeColor}; color: ${nodeColor}">
                 ${node.node_type || 'Node'}
             </span>
         </div>
@@ -604,14 +609,42 @@ async function showNodeDetail(node) {
         html += '</div>';
     }
 
-    // Fetch neighbors
+    // Fetch linked publications
+    try {
+        const pubResp = await fetch(`/api/node/${encodeURIComponent(node.id)}/publications`);
+        if (pubResp.ok) {
+            const pubs = await pubResp.json();
+            if (pubs.length) {
+                html += '<div class="detail-section"><h3>Appears In</h3><ul class="related-list">';
+                pubs.forEach(p => {
+                    const clickAttr = p.file_hash
+                        ? `onclick="showPublicationDetail('${p.file_hash}')" style="cursor:pointer"`
+                        : `onclick="focusNode('${p.node_id}')" style="cursor:pointer"`;
+                    const authors = p.authors ? p.authors.join(', ') : '';
+                    const year = p.year ? ` (${p.year})` : '';
+                    const meta = (authors || year)
+                        ? `<div style="font-size:0.75em; color:var(--text-muted)">${authors}${year}</div>`
+                        : '';
+                    html += `<li ${clickAttr}>
+                        ${p.title}
+                        ${meta}
+                        <span class="score">${p.relation || ''}</span>
+                    </li>`;
+                });
+                html += '</ul></div>';
+            }
+        }
+    } catch (err) { /* ignore */ }
+
+    // Fetch neighbors (non-publication)
     try {
         const resp = await fetch(`/api/node/${encodeURIComponent(node.id)}`);
         if (resp.ok) {
             const data = await resp.json();
-            if (data.neighbors && data.neighbors.length) {
+            const nonPubs = (data.neighbors || []).filter(n => n.node_type !== 'Publication');
+            if (nonPubs.length) {
                 html += '<div class="detail-section"><h3>Connected Nodes</h3><ul class="related-list">';
-                data.neighbors.forEach(n => {
+                nonPubs.forEach(n => {
                     const color = NODE_COLORS[n.node_type] || '#6e7681';
                     html += `<li onclick="focusNode('${n.id}')" style="cursor:pointer">
                         <span style="color:${color}">${n.node_type}</span>:
@@ -623,6 +656,9 @@ async function showNodeDetail(node) {
             }
         }
     } catch (err) { /* ignore */ }
+
+    // Manual link creation form
+    html += buildAddLinkForm(node.id);
 
     document.getElementById('detail-content').innerHTML = html;
     openDetail();
@@ -773,4 +809,136 @@ function lighten(hex) {
     const g = Math.min(255, ((num >> 8) & 0xFF) + 40);
     const b = Math.min(255, (num & 0xFF) + 40);
     return `rgb(${r}, ${g}, ${b})`;
+}
+
+// ============================================================
+// Manual Link Creation
+// ============================================================
+
+const RELATION_PRESETS = [
+    'RELATED_CONCEPT', 'SAME_AS', 'SUBTOPIC_OF', 'EXTENDS',
+    'CONTRASTS', 'ENABLES', 'REQUIRES', 'CO_AUTHORED',
+    'SHARES_KEYWORDS', 'SHARES_TOPICS', 'APPLIES_TO',
+];
+
+function buildAddLinkForm(sourceNodeId) {
+    const options = RELATION_PRESETS.map(r =>
+        `<option value="${r}">${r.replace(/_/g, ' ')}</option>`
+    ).join('');
+
+    return `
+        <div class="detail-section">
+            <h3>Add Manual Link</h3>
+            <div class="link-form" style="font-size: 0.85em;">
+                <div style="margin-bottom: 6px;">
+                    <label style="font-size: 0.8em; color: var(--text-secondary); text-transform: none; letter-spacing: normal;">
+                        Target node (search)
+                    </label>
+                    <input type="text" id="link-target-search"
+                        placeholder="Type to search nodes..."
+                        oninput="searchLinkTarget(this.value)"
+                        autocomplete="off"
+                        style="width: 100%; padding: 6px 8px; margin-top: 2px;
+                               background: var(--bg-tertiary); border: 1px solid var(--border);
+                               border-radius: 4px; color: var(--text-primary); font-size: 1em;">
+                    <div id="link-target-results" style="max-height: 120px; overflow-y: auto; margin-top: 2px;"></div>
+                    <input type="hidden" id="link-target-id" value="">
+                </div>
+                <div style="margin-bottom: 6px;">
+                    <label style="font-size: 0.8em; color: var(--text-secondary); text-transform: none; letter-spacing: normal;">
+                        Relation type
+                    </label>
+                    <select id="link-relation"
+                        style="width: 100%; padding: 6px 8px; margin-top: 2px;
+                               background: var(--bg-tertiary); border: 1px solid var(--border);
+                               border-radius: 4px; color: var(--text-primary); font-size: 1em;">
+                        ${options}
+                    </select>
+                </div>
+                <div id="link-form-msg" style="font-size: 0.8em; margin-bottom: 4px;"></div>
+                <button class="btn btn-sm" onclick="submitManualLink('${sourceNodeId}')"
+                    style="margin-top: 4px;">
+                    Create Link
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+let _linkSearchTimeout = null;
+
+function searchLinkTarget(query) {
+    clearTimeout(_linkSearchTimeout);
+    const container = document.getElementById('link-target-results');
+    if (!query || query.length < 2) {
+        container.innerHTML = '';
+        return;
+    }
+    _linkSearchTimeout = setTimeout(async () => {
+        try {
+            const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+            if (!resp.ok) return;
+            const results = await resp.json();
+            const items = [
+                ...(results.graph_nodes || []).slice(0, 8),
+                ...(results.publications || []).slice(0, 4).map(p => ({
+                    id: `pub_${p.file_hash.substring(0, 12)}`,
+                    label: p.title,
+                    node_type: 'Publication',
+                })),
+            ];
+            if (!items.length) {
+                container.innerHTML = '<div style="padding:4px; color:var(--text-muted); font-size:0.8em">No matches</div>';
+                return;
+            }
+            container.innerHTML = items.map(n => {
+                const color = NODE_COLORS[n.node_type] || '#6e7681';
+                return `<div class="result-item" style="padding:4px 6px; border-left-color:${color}"
+                    onclick="selectLinkTarget('${n.id}', '${(n.label || n.id).replace(/'/g, "\\'")}')">
+                    <span style="color:${color}; font-size:0.8em">${n.node_type || 'Node'}</span>
+                    ${n.label || n.id}
+                </div>`;
+            }).join('');
+        } catch (err) { /* ignore */ }
+    }, 250);
+}
+
+function selectLinkTarget(nodeId, label) {
+    document.getElementById('link-target-id').value = nodeId;
+    document.getElementById('link-target-search').value = label;
+    document.getElementById('link-target-results').innerHTML = '';
+}
+
+async function submitManualLink(sourceId) {
+    const targetId = document.getElementById('link-target-id').value;
+    const relation = document.getElementById('link-relation').value;
+    const msgEl = document.getElementById('link-form-msg');
+
+    if (!targetId) {
+        msgEl.innerHTML = '<span style="color:var(--red)">Select a target node first.</span>';
+        return;
+    }
+
+    if (sourceId === targetId) {
+        msgEl.innerHTML = '<span style="color:var(--red)">Cannot link a node to itself.</span>';
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/edge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: sourceId, target: targetId, relation }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            msgEl.innerHTML = `<span style="color:var(--green)">Link created: ${data.relation}</span>`;
+            // Refresh the graph to show the new edge
+            loadFullGraph();
+        } else {
+            msgEl.innerHTML = `<span style="color:var(--red)">${data.error || 'Failed'}</span>`;
+        }
+    } catch (err) {
+        msgEl.innerHTML = `<span style="color:var(--red)">Network error</span>`;
+    }
 }
