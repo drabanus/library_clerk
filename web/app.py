@@ -136,10 +136,12 @@ def create_app(config: dict) -> Flask:
     @app.route("/api/node/<node_id>")
     def api_node(node_id):
         """Get a single node with its neighbors."""
-        node = graph.get_node(node_id)
-        if not node:
+        # Try the exact ID first, then resolve from focused-view label
+        real_id = engine._resolve_graph_id(node_id)
+        if not real_id:
             return jsonify({"error": "Node not found"}), 404
-        neighbors = graph.get_neighbors(node_id)
+        node = graph.get_node(real_id)
+        neighbors = graph.get_neighbors(real_id)
         return jsonify({"node": node, "neighbors": neighbors})
 
     @app.route("/api/node/<node_id>/publications")

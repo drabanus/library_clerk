@@ -370,26 +370,28 @@ async function loadClusters() {
         const clusters = await resp.json();
 
         // Build cluster visualization as a graph
-        const nodes = [];
+        const nodeMap = {};  // deduplicate by ID
         const edges = [];
 
         clusters.forEach(cluster => {
             const domainId = `cluster_${cluster.domain}`;
-            nodes.push({
+            nodeMap[domainId] = {
                 id: domainId,
                 label: cluster.domain,
                 node_type: 'Domain',
                 size: cluster.size,
-            });
+            };
 
             cluster.publications.forEach(pub => {
                 const pubId = `cpub_${pub.file_hash}`;
-                nodes.push({
-                    id: pubId,
-                    label: pub.title,
-                    node_type: 'Publication',
-                    file_hash: pub.file_hash,
-                });
+                if (!nodeMap[pubId]) {
+                    nodeMap[pubId] = {
+                        id: pubId,
+                        label: pub.title,
+                        node_type: 'Publication',
+                        file_hash: pub.file_hash,
+                    };
+                }
                 edges.push({
                     source: pubId,
                     target: domainId,
@@ -399,7 +401,7 @@ async function loadClusters() {
             });
         });
 
-        graphData = { nodes, edges };
+        graphData = { nodes: Object.values(nodeMap), edges };
         populateFilters();
         renderCurrentView();
     } catch (err) { console.error(err); }
@@ -596,9 +598,11 @@ async function showNodeDetail(node) {
         </div>
     `;
 
-    // Show all properties
-    const skip = new Set(['id', 'label', 'node_type', 'title']);
-    const props = Object.entries(node).filter(([k]) => !k.startsWith('_') && !skip.has(k));
+    // Show non-array properties
+    const skip = new Set(['id', 'label', 'node_type', 'title', 'publications', 'size']);
+    const props = Object.entries(node).filter(
+        ([k, v]) => !k.startsWith('_') && !skip.has(k) && !Array.isArray(v)
+    );
     if (props.length) {
         html += '<div class="detail-section"><h3>Properties</h3>';
         props.forEach(([key, val]) => {
@@ -609,34 +613,29 @@ async function showNodeDetail(node) {
         html += '</div>';
     }
 
-    // Fetch linked publications
+    // Show publications — try the API first, fall back to inline data
+    let pubsHtml = '';
     try {
         const pubResp = await fetch(`/api/node/${encodeURIComponent(node.id)}/publications`);
         if (pubResp.ok) {
             const pubs = await pubResp.json();
             if (pubs.length) {
-                html += '<div class="detail-section"><h3>Appears In</h3><ul class="related-list">';
-                pubs.forEach(p => {
-                    const clickAttr = p.file_hash
-                        ? `onclick="showPublicationDetail('${p.file_hash}')" style="cursor:pointer"`
-                        : `onclick="focusNode('${p.node_id}')" style="cursor:pointer"`;
-                    const authors = p.authors ? p.authors.join(', ') : '';
-                    const year = p.year ? ` (${p.year})` : '';
-                    const meta = (authors || year)
-                        ? `<div style="font-size:0.75em; color:var(--text-muted)">${authors}${year}</div>`
-                        : '';
-                    html += `<li ${clickAttr}>
-                        ${p.title}
-                        ${meta}
-                        <span class="score">${p.relation || ''}</span>
-                    </li>`;
-                });
-                html += '</ul></div>';
+                pubsHtml = renderPubsList(pubs);
             }
         }
     } catch (err) { /* ignore */ }
 
-    // Fetch neighbors (non-publication)
+    // Fallback: if the node has an inline "publications" array (from focused views)
+    if (!pubsHtml && node.publications && node.publications.length) {
+        pubsHtml = '<div class="detail-section"><h3>Appears In</h3><ul class="related-list">';
+        node.publications.forEach(title => {
+            pubsHtml += `<li style="font-size:0.85em">${title}</li>`;
+        });
+        pubsHtml += '</ul></div>';
+    }
+    html += pubsHtml;
+
+    // Fetch neighbors (non-publication) from the real graph
     try {
         const resp = await fetch(`/api/node/${encodeURIComponent(node.id)}`);
         if (resp.ok) {
@@ -662,6 +661,27 @@ async function showNodeDetail(node) {
 
     document.getElementById('detail-content').innerHTML = html;
     openDetail();
+}
+
+function renderPubsList(pubs) {
+    let html = '<div class="detail-section"><h3>Appears In</h3><ul class="related-list">';
+    pubs.forEach(p => {
+        const clickAttr = p.file_hash
+            ? `onclick="showPublicationDetail('${p.file_hash}')" style="cursor:pointer"`
+            : `onclick="focusNode('${p.node_id}')" style="cursor:pointer"`;
+        const authors = p.authors ? p.authors.join(', ') : '';
+        const year = p.year ? ` (${p.year})` : '';
+        const meta = (authors || year)
+            ? `<div style="font-size:0.75em; color:var(--text-muted)">${authors}${year}</div>`
+            : '';
+        html += `<li ${clickAttr}>
+            ${p.title}
+            ${meta}
+            <span class="score">${p.relation || ''}</span>
+        </li>`;
+    });
+    html += '</ul></div>';
+    return html;
 }
 
 async function showNodeDetailById(nodeId) {

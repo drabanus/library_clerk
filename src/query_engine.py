@@ -103,12 +103,21 @@ class QueryEngine:
 
         Walks the node's neighbors looking for Publication nodes,
         then enriches each with title/authors/year from the store.
+        If node_id doesn't exist in the graph, tries to resolve it
+        by matching common ID-prefix patterns (e.g. "john smith" →
+        "author_john_smith") or by searching the store directly.
         """
-        neighbors = self.graph.get_neighbors(node_id)
+        real_id = self._resolve_graph_id(node_id)
+        neighbors = self.graph.get_neighbors(real_id) if real_id else []
         pub_neighbors = [
             n for n in neighbors
             if n.get("node_type") == "Publication"
         ]
+
+        # If we found nothing via graph traversal, fall back to a
+        # direct search through all publications in the store.
+        if not pub_neighbors:
+            return self._publications_by_label(node_id)
 
         results = []
         seen = set()
@@ -117,11 +126,9 @@ class QueryEngine:
             if pub_id in seen:
                 continue
             seen.add(pub_id)
-            # Extract file_hash from the pub node id (pub_<hash12>)
             file_hash = nb.get("file_hash")
             if not file_hash and pub_id.startswith("pub_"):
-                hash_prefix = pub_id[4:]  # after "pub_"
-                # Look up in the store by prefix
+                hash_prefix = pub_id[4:]
                 for summary in self.store.get_publications_summary():
                     if summary["file_hash"].startswith(hash_prefix):
                         file_hash = summary["file_hash"]
@@ -133,8 +140,6 @@ class QueryEngine:
                 "title": title,
                 "relation": nb.get("_edge_relation", ""),
             }
-
-            # Enrich from persistence if possible
             if file_hash:
                 analysis = self.store.load_analysis(file_hash)
                 if analysis:
@@ -142,9 +147,48 @@ class QueryEngine:
                     entry["title"] = analysis.classification.title
                     entry["authors"] = analysis.classification.authors
                     entry["year"] = analysis.classification.year
-
             results.append(entry)
+        return results
 
+    def _resolve_graph_id(self, node_id: str) -> str | None:
+        """Try to find a node in the graph, falling back on common prefixes."""
+        if self.graph.get_node(node_id):
+            return node_id
+        # Focused views use bare labels; the real graph prefixes them.
+        slug = node_id.lower().replace(" ", "_")
+        for prefix in ("author_", "kw_", "concept_", "topic_", "domain_", "method_"):
+            candidate = prefix + slug
+            if self.graph.get_node(candidate):
+                return candidate
+        return None
+
+    def _publications_by_label(self, label: str) -> list[dict]:
+        """
+        Fallback: find publications that mention `label` in their
+        authors, keywords, topics, etc.  Used when the focused-view
+        node ID doesn't match any real graph node.
+        """
+        label_lower = label.lower()
+        analyses = self.store.load_all_analyses()
+        results = []
+        for a in analyses:
+            c = a.classification
+            searchable = (
+                [au.lower() for au in c.authors]
+                + [k.lower() for k in c.keywords]
+                + [t.lower() for t in c.topics]
+                + [d.lower() for d in c.research_domains]
+                + [m.lower() for m in c.methodologies]
+            )
+            if label_lower in searchable:
+                results.append({
+                    "node_id": f"pub_{a.file_hash[:12]}",
+                    "file_hash": a.file_hash,
+                    "title": c.title,
+                    "authors": c.authors,
+                    "year": c.year,
+                    "relation": "",
+                })
         return results
 
     def get_clusters(self) -> list[dict]:
@@ -170,10 +214,10 @@ class QueryEngine:
                 "domain": domain,
                 "size": len(pubs),
                 "publications": pubs,
-                "year_range": (
+                "year_range": [
                     min((p["year"] for p in pubs if p["year"]), default=None),
                     max((p["year"] for p in pubs if p["year"]), default=None),
-                ),
+                ],
                 "common_topics": _most_common(
                     [t for p in pubs for t in p["topics"]], n=5
                 ),
@@ -224,14 +268,16 @@ class QueryEngine:
         """
         analyses = self.store.load_all_analyses()
 
-        # Count co-occurrences
+        # Count co-occurrences and track which publications each keyword appears in
         cooccurrence: dict[tuple, int] = Counter()
         keyword_count: dict[str, int] = Counter()
+        keyword_pubs: dict[str, list] = defaultdict(list)
 
         for a in analyses:
             kws = [k.lower() for k in a.classification.keywords]
             for kw in kws:
                 keyword_count[kw] += 1
+                keyword_pubs[kw].append(a.classification.title)
             for i, kw1 in enumerate(kws):
                 for kw2 in kws[i + 1:]:
                     pair = tuple(sorted([kw1, kw2]))
@@ -239,7 +285,7 @@ class QueryEngine:
 
         # Build vis-ready network
         nodes = [
-            {"id": kw, "label": kw, "size": count}
+            {"id": kw, "label": kw, "size": count, "publications": keyword_pubs[kw]}
             for kw, count in keyword_count.most_common(100)
         ]
         node_ids = {n["id"] for n in nodes}
@@ -253,7 +299,11 @@ class QueryEngine:
         return {"nodes": nodes, "edges": edges}
 
     def get_author_network(self) -> dict:
-        """Build co-authorship network."""
+        """Build co-authorship network.
+
+        Includes ALL authors (not just those with co-authorship edges).
+        Solo authors appear as isolated nodes so they are still visible.
+        """
         analyses = self.store.load_all_analyses()
 
         author_pubs: dict[str, list] = defaultdict(list)
@@ -268,11 +318,17 @@ class QueryEngine:
                     pair = tuple(sorted([a1, a2]))
                     coauthorship[pair] += 1
 
+        # Include all authors (up to 200), not just those with co-authorship.
         nodes = [
-            {"id": au, "label": au, "size": len(pubs)}
+            {
+                "id": au,
+                "label": au,
+                "size": len(pubs),
+                "publications": pubs,
+            }
             for au, pubs in sorted(
                 author_pubs.items(), key=lambda x: -len(x[1])
-            )[:100]
+            )[:200]
         ]
         node_ids = {n["id"] for n in nodes}
 
