@@ -147,6 +147,20 @@ def _has_unpaper() -> bool:
     return shutil.which("unpaper") is not None
 
 
+def _ocr_available() -> bool:
+    """Check whether ocrmypdf and tesseract are both available."""
+    if not shutil.which("ocrmypdf"):
+        logger.warning("  ocrmypdf not found on PATH — OCR disabled")
+        return False
+    if not shutil.which("tesseract"):
+        logger.warning(
+            "  tesseract not found on PATH — OCR disabled. "
+            "Install with: sudo apt install tesseract-ocr"
+        )
+        return False
+    return True
+
+
 def _run_ocr(pdf_path: str) -> str:
     """
     Run OCR on a scanned PDF.
@@ -244,15 +258,21 @@ def extract_pdf(path: str) -> ExtractedDocument:
 
     # Check if this is a scanned document
     if _is_scanned_pdf(doc):
-        doc.close()
+        if _ocr_available():
+            doc.close()
 
-        # OCR pipeline: rename original, produce OCR'd version
-        path = _run_ocr(path)
-        was_ocred = True
+            # OCR pipeline: rename original, produce OCR'd version
+            path = _run_ocr(path)
+            was_ocred = True
 
-        # Re-open the OCR'd PDF
-        doc = fitz.open(path)
-        metadata = doc.metadata or {}
+            # Re-open the OCR'd PDF
+            doc = fitz.open(path)
+            metadata = doc.metadata or {}
+        else:
+            logger.warning(
+                f"  Scanned PDF but OCR tools not available — "
+                f"extracting with limited text: {Path(path).name}"
+            )
 
     pages_text = []
     for page in doc:
