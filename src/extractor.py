@@ -79,7 +79,7 @@ def _strip_html(html_content: str) -> str:
     return parser.get_text()
 
 
-def _compute_file_hash(path: str) -> str:
+def compute_file_hash(path: str) -> str:
     """SHA-256 hash of file contents for change detection."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -142,6 +142,11 @@ def _is_scanned_pdf(doc: fitz.Document) -> bool:
     return is_scanned
 
 
+def _has_unpaper() -> bool:
+    """Check whether the 'unpaper' binary is on PATH."""
+    return shutil.which("unpaper") is not None
+
+
 def _run_ocr(pdf_path: str) -> str:
     """
     Run OCR on a scanned PDF.
@@ -167,20 +172,25 @@ def _run_ocr(pdf_path: str) -> str:
     logger.info(f"  Renaming: {original.name} -> {no_ocr_name}")
     shutil.move(str(original), str(no_ocr_path))
 
+    # Build ocrmypdf command.  --clean requires the 'unpaper' system
+    # package; only use it when unpaper is installed.
+    cmd = [
+        "ocrmypdf",
+        "--skip-text",       # Don't re-OCR pages that already have text
+        "--optimize", "1",   # Light optimization
+        "--deskew",          # Fix skewed scans
+    ]
+    if _has_unpaper():
+        cmd.append("--clean")   # Clean up scan artifacts (needs unpaper)
+    else:
+        logger.info("  unpaper not found — skipping --clean flag")
+    cmd += ["--quiet", str(no_ocr_path), str(original)]
+
     # Run ocrmypdf:  _noOCR.pdf  →  original.pdf
     logger.info(f"  Running OCR: {no_ocr_name} -> {original.name}")
     try:
         result = subprocess.run(
-            [
-                "ocrmypdf",
-                "--skip-text",       # Don't re-OCR pages that already have text
-                "--optimize", "1",   # Light optimization
-                "--deskew",          # Fix skewed scans
-                "--clean",           # Clean up scan artifacts before OCR
-                "--quiet",
-                str(no_ocr_path),
-                str(original),
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=600,  # 10 minute timeout per file
@@ -266,7 +276,7 @@ def extract_pdf(path: str) -> ExtractedDocument:
 
     return ExtractedDocument(
         file_path=str(Path(path).resolve()),
-        file_hash=_compute_file_hash(path),
+        file_hash=compute_file_hash(path),
         file_type="pdf",
         raw_text=raw_text,
         was_ocred=was_ocred,
@@ -313,7 +323,7 @@ def extract_epub(path: str) -> ExtractedDocument:
 
     return ExtractedDocument(
         file_path=str(Path(path).resolve()),
-        file_hash=_compute_file_hash(path),
+        file_hash=compute_file_hash(path),
         file_type="epub",
         raw_text=raw_text,
         title=title,

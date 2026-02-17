@@ -4,6 +4,8 @@ ebooklib>=0.18
 python-docx>=1.1.0
 
 # OCR for scanned PDFs (requires tesseract-ocr system package)
+# Optional: install 'unpaper' system package for scan artifact cleanup
+#   sudo apt install tesseract-ocr unpaper
 ocrmypdf>=16.0.0
 
 # LLM inference — local via Ollama, or cloud APIs

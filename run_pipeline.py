@@ -36,7 +36,7 @@ from threading import Event, Thread
 
 import yaml
 
-from src.extractor import scan_library, extract_document, ExtractedDocument
+from src.extractor import scan_library, extract_document, compute_file_hash, ExtractedDocument
 from src.llm_factory import create_llm_backend
 from src.classifier import PublicationClassifier, PublicationAnalysis, SkipFile
 from src.llm_backend import BillingError
@@ -424,13 +424,27 @@ def main():
         for idx, file_path in enumerate(files):
             progress.begin_file(idx, file_path)
             try:
+                # Quick hash check BEFORE expensive extraction / OCR.
+                # On a second run the file at this path is already the
+                # OCR'd version (the original was renamed to *_noOCR.pdf),
+                # so its hash matches what was stored in the database.
+                pre_hash = compute_file_hash(file_path)
+                if pre_hash in processed_hashes:
+                    cached = store.load_analysis(pre_hash)
+                    if cached:
+                        analyses.append(cached)
+                        cached_count += 1
+                        progress.file_done("cached")
+                        continue
+
                 doc = extract_document(file_path)
 
                 if doc.was_ocred:
                     ocr_count += 1
 
-                if doc.file_hash in processed_hashes:
-                    # Load from cache
+                # After OCR the file content (and thus hash) may have
+                # changed — re-check cache with the post-extraction hash.
+                if doc.file_hash != pre_hash and doc.file_hash in processed_hashes:
                     cached = store.load_analysis(doc.file_hash)
                     if cached:
                         analyses.append(cached)
