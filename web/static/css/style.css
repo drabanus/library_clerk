@@ -175,6 +175,27 @@ body {
     border-radius: 50%;
 }
 
+/* Copy predicates button — inline with the Relationships label */
+.btn-copy-predicates {
+    float: right;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 1px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95em;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    transition: all 0.15s;
+}
+
+.btn-copy-predicates:hover {
+    background: var(--border);
+    color: var(--text-primary);
+}
+
 /* Stats */
 .stats-grid {
     display: grid;

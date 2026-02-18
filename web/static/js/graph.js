@@ -757,6 +757,31 @@ function toggleEdgeFilter(el, type) {
     renderCurrentView();
 }
 
+function copyPredicatesToClipboard() {
+    const predicates = [...activeEdgeTypes].sort();
+    const text = predicates.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector('.btn-copy-predicates');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+    }).catch(() => {
+        // Fallback for insecure contexts (http)
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        const btn = document.querySelector('.btn-copy-predicates');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
+}
+
 function filterGraphData() {
     const nodeIds = new Set();
     const nodes = graphData.nodes.filter(n => {
