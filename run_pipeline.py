@@ -242,18 +242,35 @@ def build_graph_from_analyses(
                 graph.add_node(parent_id, "Topic", {"label": parent, "name": parent})
                 graph.add_edge(child_id, parent_id, "SUBTOPIC_OF", weight=0.8)
 
-        # Additional graph nodes/edges from ontology model
+        # Additional graph nodes/edges from ontology model.
+        # New canonical format uses colon IDs (concept:name) and
+        # "pub:this" as a placeholder for the publication node.
+        # Map Person → Author, Method → Methodology for vis compat.
+        _TYPE_MAP = {"Person": "Author", "Method": "Methodology"}
+
+        def _norm(nid):
+            """Resolve pub:this and colon IDs to graph conventions."""
+            if nid == "pub:this":
+                return pub_id
+            # person:jane_doe → author_jane_doe (merge with Stage 1 authors)
+            if nid.startswith("person:"):
+                return "author_" + nid[7:]
+            # type:slug → type_slug
+            return nid.replace(":", "_", 1) if ":" in nid else nid
+
         for gn in o.graph_nodes:
-            nid = gn.get("id", "")
+            nid = _norm(gn.get("id", ""))
+            node_type = gn.get("type", "Entity")
+            node_type = _TYPE_MAP.get(node_type, node_type)
             if nid and not graph.get_node(nid):
-                graph.add_node(nid, gn.get("type", "Entity"), {
+                graph.add_node(nid, node_type, {
                     "label": gn.get("label", nid),
                     **gn.get("properties", {}),
                 })
 
         for ge in o.graph_edges:
-            src = ge.get("source", "")
-            tgt = ge.get("target", "")
+            src = _norm(ge.get("source", ""))
+            tgt = _norm(ge.get("target", ""))
             if src and tgt:
                 graph.add_edge(
                     src, tgt,

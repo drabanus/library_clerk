@@ -109,58 +109,98 @@ PUBLICATION TEXT:
 {text}"""
 
 
-STAGE2_SYSTEM = """You are an ontology engineer. You generate structured knowledge graph entries from publication metadata.
-Always respond with valid JSON. Create meaningful semantic relationships."""
+STAGE2_SYSTEM = """You are a strict ontology extraction engine. You extract structured semantic triples from scientific publication text following a fixed schema. Always respond with valid JSON only. Be conservative: extract only observable facts stated in the text. If uncertain, extract less, not more."""
 
-STAGE2_PROMPT = """Given this publication metadata, generate graph database entries.
+STAGE2_MAX_TEXT_CHARS = 8000
 
-Publication metadata:
+STAGE2_PROMPT = """Extract a structured ontology from this publication.
+
+METADATA (from prior analysis):
 - Title: {title}
 - Authors: {authors}
 - Year: {year}
 - Domains: {domains}
-- Topics: {topics}
-- Keywords: {keywords}
-- Methodologies: {methodologies}
 - Summary: {summary}
-- Key findings: {findings}
 
-Generate the following JSON structure:
+DOCUMENT TEXT (may be truncated):
+{text}
 
+────────────────────────────────────────
+
+ONTOLOGY EXTRACTION RULES
+
+1. Extract only observable facts. Do NOT infer intent, correctness, novelty, or importance.
+2. Distinguish "says" from "is" — use makes_claim, reports_result, defines, etc.
+   NEVER use predicates like "proves", "is true", "is wrong".
+3. One document at a time — assume no global knowledge beyond what is written.
+4. Prefer atomic triples — decompose complex statements into simple triples.
+5. Be conservative — if uncertain, extract less. Aim for 5-15 nodes and 10-30 triples.
+
+CANONICAL NODE TYPES (use only these):
+  Publication, Person, Organization, Section, Figure, Table, Equation,
+  Reference, Concept, Method, Instrument, Dataset, Result, Claim
+
+NODE ID FORMAT: type:lowercase_slug
+  Examples: concept:neural_networks, method:gradient_descent, person:j_doe,
+  sec:introduction, ref:smith_2020, result:accuracy_95pct, claim:01
+Use "pub:this" to refer to the current publication.
+
+ALLOWED PREDICATES (use only these):
+
+Identity & provenance:
+  has_title, has_abstract, has_identifier, has_doi, has_publication_date
+
+Authorship:
+  has_author, has_affiliation, affiliated_with, funded_by, acknowledges
+
+Document structure:
+  has_section, has_subsection, has_figure, has_table, has_equation, has_page_range
+
+Citations:
+  cites, self_cites
+
+Concepts & terminology:
+  defines, uses_term, aliases, abbreviates, refers_to_concept
+
+Methods & instrumentation:
+  uses_method, describes_method, uses_instrument, uses_software,
+  uses_algorithm, has_parameter, has_value
+
+Results & data:
+  reports_result, reports_measurement, reports_dataset,
+  has_numeric_value, has_unit, has_uncertainty, derived_using_method
+
+Claims & reasoning:
+  makes_claim, supports_claim, qualifies_claim, limits_claim,
+  contradicts_claim, assumes, concludes
+
+Comparison & relation:
+  compares_with, extends, improves_upon, reproduces,
+  is_consistent_with, is_inconsistent_with
+
+Scope:
+  applies_to, limited_to, states_limitation, states_uncertainty, states_future_work
+
+EXTRACTION PROCEDURE (follow in order):
+1. Create Section nodes for major document sections.
+2. Create Concept nodes for explicitly defined or named concepts.
+3. Create Method/Instrument nodes for named methods, algorithms, tools.
+4. Create Result nodes for reported results (with numeric values when available).
+5. Create Claim nodes for key claims and conclusions.
+6. Create Reference nodes for cited works.
+7. Connect all nodes with triples using only allowed predicates.
+
+RESPOND WITH JSON ONLY:
 {{
-  "concepts": [
-    {{"name": "concept_name", "definition": "brief definition", "domain": "parent domain"}}
+  "nodes": [
+    {{"id": "concept:example", "type": "Concept", "label": "Display Name", "properties": {{}}}},
+    {{"id": "method:example", "type": "Method", "label": "Example Method"}}
   ],
-  "concept_relationships": [
-    {{"from": "concept_a", "to": "concept_b", "relation": "is_part_of|extends|contrasts|enables|requires|applies_to"}}
-  ],
-  "topic_hierarchy": [
-    {{"topic": "specific_topic", "parent": "broader_topic", "level": "broad|mid|specific"}}
-  ],
-  "suggested_connections": [
-    {{"type": "thematic|methodological|theoretical|applied",
-      "description": "why this publication might relate to others",
-      "connection_keywords": ["keyword1", "keyword2"]}}
-  ],
-  "graph_nodes": [
-    {{"id": "unique_id", "type": "Topic|Concept|Methodology|Domain|Author|Keyword",
-      "label": "display name", "properties": {{}}}}
-  ],
-  "graph_edges": [
-    {{"source": "node_id", "target": "node_id", "relation": "relation_type",
-      "weight": 0.8, "properties": {{}}}}
+  "triples": [
+    {{"subject": "pub:this", "predicate": "defines", "object": "concept:example"}},
+    {{"subject": "pub:this", "predicate": "uses_method", "object": "method:example"}}
   ]
-}}
-
-Rules:
-- Create 3-8 concepts that capture the core ideas
-- Define hierarchical relationships between topics
-- graph_nodes should include ALL entities (authors, topics, concepts, methodologies, keywords)
-- graph_edges should connect entities meaningfully
-- Use consistent naming: lowercase_with_underscores for IDs
-- Weight edges from 0.0 (weak) to 1.0 (strong)
-- relation types for edges: AUTHORED_BY, BELONGS_TO, HAS_KEYWORD, USES_METHODOLOGY,
-  DISCUSSES, IN_DOMAIN, SUBTOPIC_OF, RELATED_CONCEPT, ENABLES, REQUIRES, CONTRASTS"""
+}}"""
 
 
 class SkipFile(Exception):
@@ -219,7 +259,7 @@ class PublicationClassifier:
         if on_stage:
             on_stage("Stage 2: ontology")
         t1 = time.monotonic()
-        ontology, raw_s2 = self._stage2_ontology(classification)
+        ontology, raw_s2 = self._stage2_ontology(classification, doc.raw_text)
         s2_secs = time.monotonic() - t1
         logger.info(
             f"  Stage 2 complete ({s2_secs:.1f}s): {len(ontology.graph_nodes)} nodes, "
@@ -275,19 +315,18 @@ class PublicationClassifier:
         return result, data
 
     def _stage2_ontology(
-        self, classification: ClassificationResult
+        self, classification: ClassificationResult, doc_text: str = ""
     ) -> tuple[OntologyResult, dict]:
-        """Stage 2: Use deepseek-coder:6.7b for ontology/graph entry generation."""
+        """Stage 2: Strict ontology extraction with canonical predicates."""
+        text_chunk = _truncate_text(doc_text, STAGE2_MAX_TEXT_CHARS) if doc_text else ""
+
         prompt = STAGE2_PROMPT.format(
             title=classification.title,
             authors=", ".join(classification.authors),
             year=classification.year or "unknown",
             domains=", ".join(classification.research_domains),
-            topics=", ".join(classification.topics),
-            keywords=", ".join(classification.keywords),
-            methodologies=", ".join(classification.methodologies),
             summary=classification.summary,
-            findings="; ".join(classification.key_findings),
+            text=text_chunk,
         )
 
         data = self.client.generate_json(
@@ -297,13 +336,37 @@ class PublicationClassifier:
             temperature=0.2,
         )
 
+        # New format: "nodes" + "triples"
+        raw_nodes = data.get("nodes", [])
+        raw_triples = data.get("triples", [])
+
+        # Normalize triples → graph_edges (source/target/relation)
+        graph_edges = []
+        for t in raw_triples:
+            src = t.get("subject", "")
+            tgt = t.get("object", "")
+            pred = t.get("predicate", "RELATED")
+            if src and tgt and pred:
+                graph_edges.append({
+                    "source": src,
+                    "target": tgt,
+                    "relation": pred,
+                    "weight": t.get("weight", 0.7),
+                    "properties": t.get("properties", {}),
+                })
+
+        # Fallback: support legacy format from cached results
+        graph_nodes = raw_nodes or data.get("graph_nodes", [])
+        if not graph_edges:
+            graph_edges = data.get("graph_edges", [])
+
         result = OntologyResult(
             concepts=data.get("concepts", []),
             concept_relationships=data.get("concept_relationships", []),
             topic_hierarchy=data.get("topic_hierarchy", []),
             suggested_connections=data.get("suggested_connections", []),
-            graph_nodes=data.get("graph_nodes", []),
-            graph_edges=data.get("graph_edges", []),
+            graph_nodes=graph_nodes,
+            graph_edges=graph_edges,
         )
 
         return result, data

@@ -36,6 +36,17 @@ const NODE_COLORS = {
     'Methodology': '#bc8cff',
     'Concept': '#f778ba',
     'Entity': '#6e7681',
+    // Canonical ontology types
+    'Section': '#484f58',
+    'Reference': '#79c0ff',
+    'Result': '#7ee787',
+    'Claim': '#ffa657',
+    'Dataset': '#56d364',
+    'Instrument': '#a5d6ff',
+    'Organization': '#d2a8ff',
+    'Figure': '#6e7681',
+    'Table': '#6e7681',
+    'Equation': '#6e7681',
 };
 
 const NODE_SIZES = {
@@ -47,6 +58,17 @@ const NODE_SIZES = {
     'Concept': 11,
     'Keyword': 9,
     'Entity': 10,
+    // Canonical ontology types
+    'Section': 8,
+    'Reference': 9,
+    'Result': 11,
+    'Claim': 11,
+    'Dataset': 11,
+    'Instrument': 10,
+    'Organization': 12,
+    'Figure': 8,
+    'Table': 8,
+    'Equation': 8,
 };
 
 // ============================================================
